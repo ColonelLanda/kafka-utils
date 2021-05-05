@@ -262,6 +262,7 @@ class KafkaAdminGroupReader:
         self.log = logging.getLogger(__name__)
         self.admin_client = KafkaAdminClient(
             bootstrap_servers=kafka_config.broker_list,
+            **kafka_config.ssl_parameters
         )
 
     def read_group(self, groupid):
@@ -317,6 +318,7 @@ class KafkaGroupReader:
             consumer_timeout_ms=30000,
             fetch_max_wait_ms=2000,
             max_partition_fetch_bytes=10 * 1024 * 1024,  # 10MB
+            **self.kafka_config.ssl_parameters
         )
 
         # Fetch metadata as partitions_for_topic only returns locally cached metadata

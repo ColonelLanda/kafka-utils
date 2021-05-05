@@ -18,6 +18,7 @@ import glob
 import logging
 import os
 from collections import namedtuple
+import ssl
 
 import six
 import yaml
@@ -35,7 +36,7 @@ HOME_OVERRIDE = '.kafka_discovery'
 class ClusterConfig(
     namedtuple(
         'ClusterConfig',
-        ['type', 'name', 'broker_list', 'zookeeper'],
+        ['type', 'name', 'broker_list', 'zookeeper', 'key_path', 'cert_path'],
     ),
 ):
     """Cluster configuration.
@@ -62,6 +63,17 @@ class ClusterConfig(
             ",".join(sorted([_f for _f in broker_list if _f])),
             ",".join(sorted([_f for _f in zk_list if _f]))
         ))
+
+    @property
+    def ssl_parameters(self):
+        if self.key_path:
+            context = ssl.SSLContext()
+            # the certificate used for authentication is self signed on the server side, which is why
+            # we only validate the client on the server, the client does not validate the server's certificate
+            context.verify_mode = ssl.CERT_NONE
+            context.load_cert_chain(certfile=self.cert_path, keyfile=self.key_path)
+            return {'security_protocol': 'SSL', 'ssl_context': context}
+        return {}
 
 
 def load_yaml_config(config_path):
@@ -151,40 +163,36 @@ class TopologyConfiguration(object):
 
     def get_all_clusters(self):
         return [
-            ClusterConfig(
-                type=self.cluster_type,
-                name=name,
-                broker_list=cluster['broker_list'],
-                zookeeper=cluster['zookeeper'],
-            )
+            self._config_to_cluster(name, cluster)
             for name, cluster in six.iteritems(self.clusters)
         ]
 
     def get_cluster_by_name(self, name):
         if name in self.clusters:
             cluster = self.clusters[name]
-            return ClusterConfig(
-                type=self.cluster_type,
-                name=name,
-                broker_list=cluster['broker_list'],
-                zookeeper=cluster['zookeeper'],
-            )
+            return self._config_to_cluster(name, cluster)
         raise ConfigurationError("No cluster with name: {0}".format(name))
 
     def get_local_cluster(self):
         if self.local_config:
             try:
                 local_cluster = self.clusters[self.local_config['cluster']]
-                return ClusterConfig(
-                    type=self.cluster_type,
-                    name=self.local_config['cluster'],
-                    broker_list=local_cluster['broker_list'],
-                    zookeeper=local_cluster['zookeeper'])
+                return self._config_to_cluster(self.local_config['cluster'], local_cluster)
             except KeyError:
                 self.log.exception("Invalid topology file")
                 raise InvalidConfigurationError("Invalid topology file")
         else:
             raise ConfigurationError("No default local cluster configured")
+
+    def _config_to_cluster(self, name, cluster_conf):
+        return ClusterConfig(
+            type=self.cluster_type,
+            name=name,
+            broker_list=cluster_conf['broker_list'],
+            zookeeper=cluster_conf['zookeeper'],
+            cert_path=cluster_conf.get("cert_path"),
+            key_path=cluster_conf.get("key_path"),
+        )
 
     def __repr__(self):
         return ("TopologyConfig: cluster_type {0}, clusters: {1},"
